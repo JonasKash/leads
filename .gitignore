@@ -1,0 +1,19 @@
+# Ambientes virtuais e dependências
+.env
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Arquivos do OS e logs
+.DS_Store
+*.log
+
+# Arquivos de dados de usuários (.xlsx carregados)
+*.xlsx
+*.csv
+
+# data/leads.json NÃO é ignorado — é commitado para a equipe ver no deploy
+# Outros JSONs de sessão temporária (se existirem) podem ser ignorados com:
+# data/*.tmp.json
