@@ -44,7 +44,7 @@ def _classificacao_color(cls: str) -> str:
     return "#3B82F6"
 
 
-def render_lead_card(lead: dict):
+def render_lead_card(lead: dict, show_assign: bool = False):
     """Renderiza o card expandido de um lead dentro de um st.expander."""
     cls = lead.get("classificacao", "")
     score = lead.get("score", 0)
@@ -158,6 +158,37 @@ def render_lead_card(lead: dict):
         if insight:
             st.divider()
             st.info(f"💡 {insight}")
+
+        # ── Atribuir para closer ──────────────────────────────────────────────
+        if show_assign:
+            st.divider()
+            st.markdown(
+                "<p style='color:#64748B;font-size:11px;font-weight:700;"
+                "text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px'>"
+                "Atribuir para closer</p>",
+                unsafe_allow_html=True,
+            )
+            a1, a2 = st.columns([3, 1])
+            with a1:
+                closer_choice = st.selectbox(
+                    "Closer",
+                    options=["", "Matheus", "Jonas", "Giovanne"],
+                    key=f"closer_sel_{username}",
+                    label_visibility="collapsed",
+                    format_func=lambda x: "Selecione o closer..." if x == "" else x,
+                )
+            with a2:
+                if st.button(
+                    "Atribuir →",
+                    key=f"assign_btn_{username}",
+                    use_container_width=True,
+                    disabled=not closer_choice,
+                ):
+                    st.session_state["assign_action"] = {
+                        "username": username,
+                        "closer": closer_choice.lower(),
+                    }
+                    st.rerun()
 
         # ── Score breakdown ───────────────────────────────────────────────────
         criterios = lead.get("criterios_aplicados", [])

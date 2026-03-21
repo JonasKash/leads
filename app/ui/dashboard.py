@@ -17,17 +17,33 @@ def _color_cls(val: str) -> str:
 
 
 def render_dashboard(leads: list[dict]):
-    """Renderiza o dashboard completo com filtros, métricas e tabela de leads."""
+    """Renderiza o dashboard principal com leads disponíveis (sem closer atribuído)."""
+
+    # Apenas leads não atribuídos
+    disponiveis = [l for l in leads if not l.get("closer")]
 
     st.markdown(
-        "<h2 style='color:#F1F5F9;margin-bottom:4px;font-weight:800;letter-spacing:-0.5px'>Dashboard de Leads</h2>",
+        "<h2 style='color:#F1F5F9;margin-bottom:4px;font-weight:800;letter-spacing:-0.5px'>"
+        "📊 Dashboard Principal</h2>"
+        "<p style='color:#64748B;margin-bottom:20px'>Leads disponíveis para atribuição</p>",
         unsafe_allow_html=True,
     )
 
-    df = pd.DataFrame(leads)
+    if not disponiveis:
+        st.markdown(
+            "<div style='text-align:center;padding:60px 20px;color:#64748B'>"
+            "<div style='font-size:3rem;margin-bottom:12px'>✅</div>"
+            "<h3 style='color:#94A3B8;margin-bottom:8px'>Todos os leads foram atribuídos!</h3>"
+            "<p>Acesse o painel de cada closer na barra lateral.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    df = pd.DataFrame(disponiveis)
 
     # ── Métricas resumo ───────────────────────────────────────────────────────
-    total = len(df)
+    total = len(disponiveis)
     quentes = df["classificacao"].str.contains("Quente").sum() if "classificacao" in df else 0
     mornos = df["classificacao"].str.contains("Morno").sum() if "classificacao" in df else 0
     frios = df["classificacao"].str.contains("Frio").sum() if "classificacao" in df else 0
@@ -121,4 +137,4 @@ def render_dashboard(leads: list[dict]):
     df_sorted = df_filtered.sort_values("score", ascending=False)
 
     for _, row in df_sorted.iterrows():
-        render_lead_card(row.to_dict())
+        render_lead_card(row.to_dict(), show_assign=True)

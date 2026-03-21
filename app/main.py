@@ -1,6 +1,6 @@
 """
 main.py — Entrypoint Streamlit do OAB Lead Qualifier.
-Orquestra upload → enriquecimento paralelo → score → dashboard.
+CRM com dashboard principal + painéis por closer.
 """
 
 import os
@@ -16,14 +16,21 @@ from enrichment.oab_module import lookup_oab
 from enrichment.site_checker import check_site
 from scoring.engine import calcular_score
 from ui.dashboard import render_dashboard
+from ui.closer_panel import render_closer_panel
 from storage import save_leads, load_leads
+
+CLOSERS = {
+    "matheus":  "Matheus",
+    "jonas":    "Jonas",
+    "giovanne": "Giovanne",
+}
 
 # ── Configuração da página ────────────────────────────────────────────────────
 st.set_page_config(
     page_title="OAB Lead Qualifier",
     page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # CSS customizado — dark theme Trust & Authority
@@ -56,6 +63,28 @@ st.markdown(
     section[data-testid="stSidebar"] {
         background-color: #0A1628 !important;
         border-right: 1px solid #1E3050;
+        min-width: 240px !important;
+    }
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 1rem !important;
+    }
+
+    /* Botões de navegação da sidebar */
+    section[data-testid="stSidebar"] .stButton > button {
+        background: transparent !important;
+        border: none !important;
+        color: #94A3B8 !important;
+        font-weight: 500 !important;
+        text-align: left !important;
+        padding: 8px 12px !important;
+        border-radius: 8px !important;
+        width: 100% !important;
+        transition: all 0.15s !important;
+    }
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        background: #162032 !important;
+        color: #F1F5F9 !important;
+        border: none !important;
     }
 
     /* ── Métricas ────────────────────────────────────────────── */
@@ -105,8 +134,8 @@ st.markdown(
         padding: 16px 18px !important;
     }
 
-    /* ── Botões ──────────────────────────────────────────────── */
-    .stButton > button {
+    /* ── Botões principais ───────────────────────────────────── */
+    .block-container .stButton > button {
         border-radius: 8px !important;
         background: #1E3050 !important;
         color: #F1F5F9 !important;
@@ -115,7 +144,7 @@ st.markdown(
         padding: 8px 16px !important;
         transition: all 0.2s !important;
     }
-    .stButton > button:hover {
+    .block-container .stButton > button:hover {
         background: #F59E0B !important;
         color: #0A1628 !important;
         border-color: #F59E0B !important;
@@ -216,11 +245,8 @@ st.markdown(
 )
 
 
+# ── Enriquecimento de lead ────────────────────────────────────────────────────
 def _enrich_lead(lead_dict: dict) -> dict:
-    """
-    Enriquece um único lead com todos os módulos em paralelo.
-    Executado dentro de um ThreadPoolExecutor.
-    """
     bio = lead_dict.get("bio", "")
     external_url = lead_dict.get("external_url", "")
     phone_full = lead_dict.get("phone_full", "")
@@ -228,10 +254,8 @@ def _enrich_lead(lead_dict: dict) -> dict:
     full_name = lead_dict.get("full_name_normalizado", lead_dict.get("full_name", ""))
     city = lead_dict.get("city", "")
 
-    # bio_parser — sem API, instantâneo
     bio_data = parse_bio(bio, external_url=external_url, phone_full=phone_full, username=username)
 
-    # Módulos com API — rodar em paralelo
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fut_oab = ex.submit(lookup_oab, full_name, city)
         fut_site = ex.submit(check_site, external_url, full_name, city)
@@ -239,32 +263,119 @@ def _enrich_lead(lead_dict: dict) -> dict:
         site_data = fut_site.result()
 
     enriched = {**lead_dict, **bio_data, **oab_data, **site_data}
-
-    # Stub CNPJ e GMB (módulos v0.2) — valores neutros para não penalizar
     enriched.setdefault("cnpj_numero", "")
     enriched.setdefault("cnpj_situacao", "")
     enriched.setdefault("cnpj_cnae_juridico", False)
     enriched.setdefault("cnpj_razao_social", "")
     enriched.setdefault("gmb_encontrado", False)
     enriched.setdefault("gmb_reviews", 0)
+    enriched.setdefault("closer", "")
 
     return calcular_score(enriched)
 
 
-# ── Tela 1 — Upload ───────────────────────────────────────────────────────────
-def tela_upload():
+# ── Sidebar de navegação (sempre visível) ─────────────────────────────────────
+def render_sidebar(leads: list[dict], pagina: str):
+    disponiveis = sum(1 for l in leads if not l.get("closer"))
+
+    with st.sidebar:
+        st.markdown(
+            "<div style='padding:8px 4px 16px'>"
+            "<span style='font-size:1.4rem'>⚖️</span> "
+            "<span style='font-size:1rem;font-weight:800;color:#F1F5F9'>OAB Lead Qualifier</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Dashboard principal ──
+        ativo_dash = pagina == "dashboard"
+        _nav_btn(
+            f"{'▶ ' if ativo_dash else ''}📊 Dashboard ({disponiveis})",
+            "dashboard", ativo_dash,
+        )
+
+        st.markdown(
+            "<p style='color:#64748B;font-size:11px;font-weight:700;text-transform:uppercase;"
+            "letter-spacing:0.8px;margin:16px 4px 6px'>Closers</p>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Painel de cada closer ──
+        for slug, nome in CLOSERS.items():
+            count = sum(1 for l in leads if l.get("closer") == slug)
+            ativo = pagina == f"closer_{slug}"
+            _nav_btn(
+                f"{'▶ ' if ativo else ''}👤 {nome} ({count})",
+                f"closer_{slug}", ativo,
+            )
+
+        st.divider()
+
+        # ── Upload / Admin ──
+        ativo_up = pagina == "upload"
+        _nav_btn(
+            f"{'▶ ' if ativo_up else ''}⬆️ Upload / Admin",
+            "upload", ativo_up,
+        )
+
+        st.divider()
+
+        # ── Salvar para equipe ──
+        if st.button("💾 Salvar para equipe", use_container_width=True, key="btn_salvar"):
+            try:
+                save_leads(leads)
+                st.success("Salvo! Faça git push.", icon="✅")
+            except Exception as e:
+                st.error(f"Erro: {e}")
+
+
+def _nav_btn(label: str, pagina_destino: str, ativo: bool):
+    """Botão de navegação da sidebar — muda de página ao clicar."""
+    style = (
+        "background:#162032!important;color:#F1F5F9!important;"
+        "border:1px solid #2D4A6E!important;font-weight:700!important;"
+        if ativo else ""
+    )
+    # Injetar estilo inline via container
+    if ativo:
+        st.markdown(
+            f"<style>#btn_{pagina_destino.replace('-','_')} button"
+            f"{{background:#162032!important;color:#F59E0B!important;"
+            f"border:1px solid #F59E0B!important;font-weight:700!important}}</style>"
+            f"<span id='btn_{pagina_destino.replace('-','_')}'></span>",
+            unsafe_allow_html=True,
+        )
+    if st.button(label, use_container_width=True, key=f"nav_{pagina_destino}"):
+        st.session_state["pagina"] = pagina_destino
+        st.rerun()
+
+
+# ── Tela Upload / Admin ───────────────────────────────────────────────────────
+def tela_upload_admin(leads: list[dict]):
+    # Stats dos leads atuais
+    if leads:
+        total = len(leads)
+        disponiveis = sum(1 for l in leads if not l.get("closer"))
+        atribuidos = total - disponiveis
+        st.markdown(
+            "<h3 style='color:#F1F5F9;font-weight:700;margin-bottom:16px'>Base de leads atual</h3>",
+            unsafe_allow_html=True,
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total de leads", total)
+        c2.metric("Disponíveis", disponiveis)
+        c3.metric("Atribuídos", atribuidos)
+        c4.metric(
+            "Closers ativos",
+            len([s for s in CLOSERS if any(l.get("closer") == s for l in leads)]),
+        )
+        st.divider()
+
+    # Upload de nova base
     st.markdown(
-        """
-        <div style="text-align:center;padding:60px 20px 30px">
-            <div style="display:inline-block;background:#162032;border:1px solid #2D4A6E;border-radius:16px;padding:40px 60px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
-                <div style="font-size:3rem;margin-bottom:12px">⚖️</div>
-                <h1 style="color:#F1F5F9;font-size:2.4rem;margin:0 0 8px;font-weight:800;letter-spacing:-0.5px">OAB Lead Qualifier</h1>
-                <p style="color:#94A3B8;font-size:1.1rem;margin:0">
-                    Qualifique seus leads de advogados em segundos
-                </p>
-            </div>
-        </div>
-        """,
+        "<h3 style='color:#F1F5F9;font-weight:700;margin-bottom:4px'>Enviar nova planilha</h3>"
+        "<p style='color:#94A3B8;margin-bottom:20px'>Um novo upload substitui toda a base atual "
+        "e reseta as atribuições dos closers.</p>",
         unsafe_allow_html=True,
     )
 
@@ -275,16 +386,14 @@ def tela_upload():
             type=["xlsx"],
             help="Exportação padrão do Growman — aba 'contacts'",
         )
-
         if uploaded:
             st.session_state["uploaded_file"] = uploaded
-            st.session_state["tela"] = "processando"
+            st.session_state["pagina"] = "processando"
             st.rerun()
-
         st.caption("Suporta exportações do Growman IG · Dados são processados localmente")
 
 
-# ── Tela 2 — Processando ─────────────────────────────────────────────────────
+# ── Tela Processando ──────────────────────────────────────────────────────────
 def tela_processando():
     st.markdown(
         "<h2 style='color:#F1F5F9;font-weight:700'>⏳ Processando leads...</h2>",
@@ -293,7 +402,7 @@ def tela_processando():
 
     uploaded = st.session_state.get("uploaded_file")
     if not uploaded:
-        st.session_state["tela"] = "upload"
+        st.session_state["pagina"] = "upload"
         st.rerun()
         return
 
@@ -302,7 +411,7 @@ def tela_processando():
     except ValueError as e:
         st.error(f"Erro ao ler o arquivo: {e}")
         if st.button("Tentar novamente"):
-            st.session_state["tela"] = "upload"
+            st.session_state["pagina"] = "upload"
             st.rerun()
         return
 
@@ -316,16 +425,15 @@ def tela_processando():
     total = len(leads_raw)
 
     if total == 0:
-        st.warning("Nenhum advogado encontrado no arquivo. Verifique se as colunas estão no formato Growman.")
+        st.warning("Nenhum advogado encontrado. Verifique se o arquivo é do Growman.")
         if st.button("Voltar"):
-            st.session_state["tela"] = "upload"
+            st.session_state["pagina"] = "upload"
             st.rerun()
         return
 
     progress = st.progress(0, text="Iniciando...")
     status_box = st.empty()
     preview_container = st.container()
-
     leads_processados = []
 
     for i, lead in enumerate(leads_raw):
@@ -336,88 +444,69 @@ def tela_processando():
 
         try:
             enriched = _enrich_lead(lead)
-        except Exception as ex:
-            # Nunca crashar — retornar lead com score 0
+        except Exception:
             enriched = {**lead, "score": 0, "classificacao": "❄️ Frio",
-                        "insight": "Erro no processamento.", "criterios_aplicados": []}
+                        "insight": "Erro no processamento.", "criterios_aplicados": [],
+                        "closer": ""}
 
         leads_processados.append(enriched)
 
-        # Preview dos primeiros 5
         if i < 5:
             cls = enriched.get("classificacao", "")
             score = enriched.get("score", 0)
             nicho = enriched.get("nicho", "")
             with preview_container:
-                st.markdown(
-                    f"✓ **{nome}** · {nicho} · Score **{score}** · {cls}",
-                    unsafe_allow_html=False,
-                )
+                st.markdown(f"✓ **{nome}** · {nicho} · Score **{score}** · {cls}")
 
     progress.progress(1.0, text="Concluído!")
     status_box.empty()
 
     st.session_state["leads"] = leads_processados
-    st.session_state["tela"] = "dashboard"
+    st.session_state["pagina"] = "dashboard"
+    # Salvar automaticamente ao processar
+    save_leads(leads_processados)
     st.rerun()
 
 
 # ── Roteador principal ────────────────────────────────────────────────────────
 def main():
-    if "tela" not in st.session_state:
-        # Auto-carregar leads salvos do projeto (para equipe acessar sem upload)
-        leads_salvos = load_leads()
-        if leads_salvos:
-            st.session_state["leads"] = leads_salvos
-            st.session_state["tela"] = "dashboard"
-            st.session_state["leads_do_arquivo"] = True
-        else:
-            st.session_state["tela"] = "upload"
-
-    tela = st.session_state["tela"]
-
-    if tela == "upload":
-        tela_upload()
-    elif tela == "processando":
-        tela_processando()
-    elif tela == "dashboard":
+    # ── Processar atribuição pendente (event-first) ──
+    if "assign_action" in st.session_state:
+        action = st.session_state.pop("assign_action")
         leads = st.session_state.get("leads", [])
-        if not leads:
-            st.session_state["tela"] = "upload"
-            st.rerun()
-        else:
-            with st.sidebar:
-                # Salvar para equipe (gera data/leads.json para commitar)
-                st.markdown(
-                    "<p style='color:#94A3B8;font-size:12px;font-weight:600;"
-                    "text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px'>"
-                    "Compartilhar</p>",
-                    unsafe_allow_html=True,
-                )
-                if st.button("💾 Salvar para equipe", use_container_width=True):
-                    try:
-                        save_leads(leads)
-                        st.success("Salvo! Faça git push para a equipe ver.", icon="✅")
-                    except Exception as e:
-                        st.error(f"Erro ao salvar: {e}")
+        for lead in leads:
+            if lead.get("username") == action["username"]:
+                lead["closer"] = action["closer"]
+                break
+        save_leads(leads)
 
-                st.divider()
-                if st.button("⬅️ Novo upload", use_container_width=True):
-                    st.session_state["tela"] = "upload"
-                    st.session_state.pop("leads", None)
-                    st.session_state.pop("uploaded_file", None)
-                    st.session_state.pop("leads_do_arquivo", None)
-                    st.rerun()
+    # ── Carregar leads na inicialização ──
+    if "leads" not in st.session_state:
+        carregados = load_leads()
+        st.session_state["leads"] = carregados or []
 
-            # Banner informativo se carregado do arquivo salvo
-            if st.session_state.get("leads_do_arquivo"):
-                st.info(
-                    "📂 Exibindo leads salvos do projeto. "
-                    "Para processar novos leads, clique em **Novo upload** na barra lateral.",
-                    icon="ℹ️",
-                )
+    # ── Página padrão ──
+    if "pagina" not in st.session_state:
+        st.session_state["pagina"] = "dashboard" if st.session_state["leads"] else "upload"
 
-            render_dashboard(leads)
+    leads = st.session_state["leads"]
+    pagina = st.session_state["pagina"]
+
+    # ── Sidebar (sempre visível, exceto durante processamento) ──
+    if pagina != "processando":
+        render_sidebar(leads, pagina)
+
+    # ── Roteamento ──
+    if pagina == "upload":
+        tela_upload_admin(leads)
+    elif pagina == "processando":
+        tela_processando()
+    elif pagina == "dashboard":
+        render_dashboard(leads)
+    elif pagina.startswith("closer_"):
+        closer_slug = pagina.replace("closer_", "")
+        closer_nome = CLOSERS.get(closer_slug, closer_slug.capitalize())
+        render_closer_panel(leads, closer_slug, closer_nome)
 
 
 if __name__ == "__main__":
