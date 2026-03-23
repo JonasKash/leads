@@ -6,30 +6,31 @@ classificação e insight personalizado.
 
 # ── Pesos dos critérios ───────────────────────────────────────────────────────
 CRITERIOS = {
-    # OAB
-    "oab_ativo":              30,
-    "oab_recente_1_3anos":    15,
+    # OAB (Bônus se disponível, mas não obrigatório)
+    "oab_ativo":              25,
+    "oab_recente_1_3anos":    10,
     "oab_senior_10anos":      -5,
 
     # CNPJ
-    "cnpj_ativo_juridico":    20,
-    "cnpj_ativo_generico":    10,
+    "cnpj_ativo_juridico":    15,
+    "cnpj_ativo_generico":     5,
     "sem_cnpj":               15,
 
-    # Presença digital
-    "sem_site":               20,
-    "site_sem_pixel":         15,
+    # Presença digital (Bio + Site)
+    "sem_site":               15,
+    "site_sem_pixel":         10,
     "site_com_pixel":         -10,
     "sem_gmb":                10,
-    "gmb_ativo_semreviews":   5,
+    "gmb_ativo_semreviews":    5,
     "gmb_forte":              -15,
 
-    # Instagram
-    "sem_link_na_bio":        15,
-    "cta_na_bio_sem_link":    20,
+    # Instagram (Peso maior para garantir classificação no browser)
+    "sem_link_na_bio":        20,
+    "cta_na_bio_sem_link":    25,
+    "identificado_pela_bio":  30,  # CRÍTICO: Pontos por ser advogado detectado
     "followers_500_5k":       10,
-    "conta_business":         5,
-    "email_disponivel":       5,
+    "conta_business":          5,
+    "email_disponivel":        5,
     "telefone_disponivel":    10,
 }
 
@@ -108,6 +109,10 @@ def calcular_score(lead: dict) -> dict:
     """
     pontos = 0
     aplicados = []
+
+    # Bônus Base: Identificado como advogado na Bio (crítico para rodar em browsers/Vercel)
+    pontos += CRITERIOS["identificado_pela_bio"]
+    aplicados.append("identificado_pela_bio")
 
     # ── OAB ──────────────────────────────────────────────────────────────────
     oab_situacao = lead.get("oab_situacao", "").upper()
