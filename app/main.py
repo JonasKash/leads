@@ -254,15 +254,32 @@ def _enrich_lead(lead_dict: dict) -> dict:
     full_name = lead_dict.get("full_name_normalizado", lead_dict.get("full_name", ""))
     city = lead_dict.get("city", "")
 
+    # bio_parser é sempre instantâneo (sem rede)
     bio_data = parse_bio(bio, external_url=external_url, phone_full=phone_full, username=username)
 
+    # APIs externas com timeout individual (OAB pode estar fora do ar)
+    oab_data = {}
+    site_data = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fut_oab = ex.submit(lookup_oab, full_name, city)
         fut_site = ex.submit(check_site, external_url, full_name, city)
-        oab_data = fut_oab.result()
-        site_data = fut_site.result()
+        try:
+            oab_data = fut_oab.result(timeout=15)
+        except Exception:
+            oab_data = {}   # OAB indisponível — scoring parcial
+        try:
+            site_data = fut_site.result(timeout=15)
+        except Exception:
+            site_data = {}  # Site checker falhou — scoring parcial
 
     enriched = {**lead_dict, **bio_data, **oab_data, **site_data}
+    enriched.setdefault("oab_numero", "")
+    enriched.setdefault("oab_situacao", "")
+    enriched.setdefault("oab_anos_ativo", None)
+    enriched.setdefault("oab_encontrado", False)
+    enriched.setdefault("site_encontrado", False)
+    enriched.setdefault("has_fb_pixel", False)
+    enriched.setdefault("has_ga", False)
     enriched.setdefault("cnpj_numero", "")
     enriched.setdefault("cnpj_situacao", "")
     enriched.setdefault("cnpj_cnae_juridico", False)
@@ -271,6 +288,7 @@ def _enrich_lead(lead_dict: dict) -> dict:
     enriched.setdefault("gmb_reviews", 0)
     enriched.setdefault("closer", "")
 
+    # Sempre calcular score com o que tiver — nunca retornar score=0 por falha de API
     return calcular_score(enriched)
 
 

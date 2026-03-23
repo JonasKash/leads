@@ -11,7 +11,7 @@ import requests
 from unidecode import unidecode
 
 OAB_API_URL = "https://cna.oab.org.br/api/advogados"
-DELAY = float(os.getenv("DELAY_OAB", "1.0"))
+DELAY = float(os.getenv("DELAY_OAB", "0.3"))  # Reduzido: API OAB pode estar indisponível
 
 _session = requests.Session()
 _session.headers.update({
@@ -26,7 +26,7 @@ def _query_oab(nome: str, uf: str = "") -> list[dict]:
     if uf:
         params["uf"] = uf.upper()
     try:
-        resp = _session.get(OAB_API_URL, params=params, timeout=10)
+        resp = _session.get(OAB_API_URL, params=params, timeout=5)
         resp.raise_for_status()
         data = resp.json()
         # A API retorna {"Data": [...]} ou diretamente uma lista
