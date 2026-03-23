@@ -14,9 +14,7 @@ __pycache__/
 *.xlsx
 *.csv
 
-# Banco de dados local — persiste no servidor, não vai para o git
-data/crm.db
-data/crm.db-wal
-data/crm.db-shm
-data/crm.json
+# Banco de dados local — agora será enviado ao Git para aparecer no Vercel
+# data/crm.db (comentado, usando JSON)
+# data/crm.json (removido do ignore para subir ao Vercel)
 data/*.migrated.json
