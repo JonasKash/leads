@@ -17,7 +17,7 @@ from enrichment.site_checker import check_site
 from scoring.engine import calcular_score
 from ui.dashboard import render_dashboard
 from ui.closer_panel import render_closer_panel
-from storage import save_leads, load_leads
+from storage import save_leads, load_leads, update_closer
 
 CLOSERS = {
     "matheus":  "Matheus",
@@ -319,14 +319,11 @@ def render_sidebar(leads: list[dict], pagina: str):
         )
 
         st.divider()
-
-        # ── Salvar para equipe ──
-        if st.button("💾 Salvar para equipe", use_container_width=True, key="btn_salvar"):
-            try:
-                save_leads(leads)
-                st.success("Salvo! Faça git push.", icon="✅")
-            except Exception as e:
-                st.error(f"Erro: {e}")
+        st.markdown(
+            "<p style='color:#64748B;font-size:11px;text-align:center'>"
+            "💾 Dados salvos automaticamente</p>",
+            unsafe_allow_html=True,
+        )
 
 
 def _nav_btn(label: str, pagina_destino: str, ativo: bool):
@@ -473,12 +470,15 @@ def main():
     # ── Processar atribuição pendente (event-first) ──
     if "assign_action" in st.session_state:
         action = st.session_state.pop("assign_action")
-        leads = st.session_state.get("leads", [])
-        for lead in leads:
-            if lead.get("username") == action["username"]:
-                lead["closer"] = action["closer"]
+        username = action["username"]
+        closer   = action["closer"]
+        # Gravar só esse lead no banco — não reescreve tudo
+        update_closer(username, closer)
+        # Sincronizar session_state
+        for lead in st.session_state.get("leads", []):
+            if lead.get("username") == username:
+                lead["closer"] = closer
                 break
-        save_leads(leads)
 
     # ── Carregar leads na inicialização ──
     if "leads" not in st.session_state:

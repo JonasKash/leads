@@ -14,6 +14,8 @@ __pycache__/
 *.xlsx
 *.csv
 
-# data/leads.json NÃO é ignorado — é commitado para a equipe ver no deploy
-# Outros JSONs de sessão temporária (se existirem) podem ser ignorados com:
-# data/*.tmp.json
+# Banco SQLite — persiste no servidor, não vai para o git
+data/crm.db
+data/crm.db-wal
+data/crm.db-shm
+data/*.migrated.json
