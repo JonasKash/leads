@@ -14,8 +14,9 @@ __pycache__/
 *.xlsx
 *.csv
 
-# Banco SQLite — persiste no servidor, não vai para o git
+# Banco de dados local — persiste no servidor, não vai para o git
 data/crm.db
 data/crm.db-wal
 data/crm.db-shm
+data/crm.json
 data/*.migrated.json
