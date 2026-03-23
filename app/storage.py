@@ -1,177 +1,149 @@
 """
-storage.py — Persistência híbria: Vercel Postgres (Cloud) ou JSON (Local).
+storage.py — Persistência Cloud com Supabase API (HTTP Browser-safe).
 
-Lógica:
-  - Se 'POSTGRES_URL' estiver nas variáveis de ambiente → Usa Postgres (Vercel)
-  - Caso contrário → Usa JSON local (Desenvolvimento local)
+Compatível com Pyodide/Stlite (Vercel Browser-based).
+Usa apenas Requests para falar com a REST API do Supabase.
 """
 
 import os
 import json
-import psycopg2
+import requests
 from pathlib import Path
-from psycopg2.extras import DictCursor, execute_values
 
 # Configuração local
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True, parents=True)
 DB_PATH_JSON = DATA_DIR / "crm.json"
 
-# Configuração Postgres (Vercel injeta POSTGRES_URL)
-POSTGRES_URL = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
+# Configuração Supabase (Vercel ou .env)
+# O Vercel injeta estes nomes se você instalou a integração
+SURL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
+SKEY = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+
+HEADERS = {
+    "apikey": SKEY,
+    "Authorization": f"Bearer {SKEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
 
 
-def _get_conn():
-    """Retorna uma conexão com Postgres ou None se não configurado."""
-    if not POSTGRES_URL:
-        return None
-    try:
-        # psycogp2 entende o formato 'postgres://...' do Vercel
-        conn = psycopg2.connect(POSTGRES_URL, sslmode="require")
-        return conn
-    except Exception as e:
-        print(f"Erro ao conectar ao Postgres: {e}")
-        return None
+def _get_api_url():
+    if not SURL: return None
+    # Mesa rounting: se a URL terminar com / apenas concatena
+    base = SURL.rstrip('/')
+    return f"{base}/rest/v1/leads"
 
-
-def _init_db():
-    """Cria a tabela no Postgres se não existir."""
-    conn = _get_conn()
-    if not conn:
-        return
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS leads (
-                    username   TEXT PRIMARY KEY,
-                    data       JSONB NOT NULL,
-                    closer     TEXT NOT NULL DEFAULT '',
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# --- OPERAÇÕES ---
 
 def save_leads(leads: list[dict]) -> None:
-    """Salva leads no Postgres (Cloud) ou JSON (Local)."""
-    conn = _get_conn()
-    if conn:
-        try:
-            # Pegar closers atuais do Postgres para não perdê-los no re-upload
-            with conn.cursor() as cur:
-                cur.execute("SELECT username, closer FROM leads")
-                existentes = {u: c for u, c in cur.fetchall()}
+    """Salva leads no Supabase (Cloud) via API REST."""
+    url = _get_api_url()
+    if not url:
+        # Fallback local se não houver Supabase configurado
+        _save_json(leads)
+        return
 
-            # Preparar dados para insert massivo (Upsert)
-            values = []
-            for lead in leads:
-                username = lead.get("username", "")
-                closer = lead.get("closer") or existentes.get(username, "") or ""
-                lead_final = {**lead, "closer": closer}
-                values.append((username, json.dumps(lead_final), closer))
+    # Pegar closers atuais do Supabase para não perder
+    try:
+        resp = requests.get(f"{url}?select=username,closer", headers=HEADERS)
+        existentes = {i['username']: i['closer'] for i in resp.json()} if resp.status_code == 200 else {}
+    except: existentes = {}
 
-            with conn.cursor() as cur:
-                execute_values(cur, """
-                    INSERT INTO leads (username, data, closer)
-                    VALUES %s
-                    ON CONFLICT (username) DO UPDATE SET
-                        data = EXCLUDED.data,
-                        closer = EXCLUDED.closer,
-                        updated_at = EXCLUDED.updated_at
-                """, values)
-            conn.commit()
-        finally:
-            conn.close()
-    else:
-        # Fallback para JSON local
-        existentes = {l.get("username", ""): l.get("closer", "") for l in _load_json()}
-        leads_finais = []
-        for lead in leads:
-            username = lead.get("username", "")
-            closer = lead.get("closer") or existentes.get(username, "") or ""
-            leads_finais.append({**lead, "closer": closer})
-        _save_json(leads_finais)
+    # Preparar dados para Upsert
+    payload = []
+    for lead in leads:
+        username = lead.get("username", "")
+        closer = lead.get("closer") or existentes.get(username, "") or ""
+        lead_final = {**lead, "closer": closer}
+        payload.append({
+            "username": username,
+            "data": lead_final, # o Supabase aceita JSON direto na coluna JSONB
+            "closer": closer,
+            "updated_at": "now()"
+        })
 
-
-def load_leads() -> list[dict] | None:
-    """Carrega leads do Postgres ou JSON."""
-    conn = _get_conn()
-    if conn:
-        try:
-            with conn.cursor(cursor_factory=DictCursor) as cur:
-                cur.execute("""
-                    SELECT data, closer FROM leads
-                    ORDER BY (data->>'score')::int DESC NULLS LAST
-                """)
-                rows = cur.fetchall()
-            if not rows:
-                # Tentar migrar do JSON se banco estiver vazio no primeiro acesso
-                local = _load_json()
-                if local:
-                    save_leads(local)
-                    return load_leads()
-                return None
-
-            leads = []
-            for row in rows:
-                lead = row['data']
-                lead['closer'] = row['closer']
-                leads.append(lead)
-            return leads
-        finally:
-            conn.close()
-    else:
-        leads = _load_json()
-        if leads:
-            leads.sort(key=lambda l: int(l.get("score", 0)), reverse=True)
-            return leads
-        return None
-
-
-def update_closer(username: str, closer: str) -> None:
-    """Atualiza o closer de um lead específico."""
-    conn = _get_conn()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                # Atualiza coluna e extrai JSON para atualizar campo interno
-                cur.execute("SELECT data FROM leads WHERE username = %s", (username,))
-                row = cur.fetchone()
-                if row:
-                    lead = row[0]
-                    lead["closer"] = closer
-                    cur.execute("""
-                        UPDATE leads SET
-                            closer = %s,
-                            data = %s,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE username = %s
-                    """, (closer, json.dumps(lead), username))
-            conn.commit()
-        finally:
-            conn.close()
-    else:
-        leads = _load_json()
-        for lead in leads:
-            if lead.get("username") == username:
-                lead["closer"] = closer
-                break
+    try:
+        # Upsert: se o username existir, ele ignora ou sobrescreve conforme config
+        # Para PostgREST (Supabase), usamos este header para Upsert:
+        h = {**HEADERS, "Prefer": "resolution=merge-duplicates"}
+        requests.post(url, json=payload, headers=h)
+    except Exception as e:
+        print(f"Erro ao salvar no Supabase: {e}")
         _save_json(leads)
 
 
-def total_leads() -> int:
-    conn = _get_conn()
-    if conn:
+def load_leads() -> list[dict] | None:
+    """Carrega leads do Supabase ou JSON."""
+    url = _get_api_url()
+    if url:
         try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM leads")
-                return cur.fetchone()[0]
-        finally:
-            conn.close()
+            # Query: ordenar por score que está dentro do JSON 'data'
+            # O Supabase REST API (PostgREST) aceita ->> para JSON
+            target = f"{url}?select=data,closer&order=data->>score.desc.nullslast"
+            resp = requests.get(target, headers=HEADERS)
+            if resp.status_code == 200:
+                rows = resp.json()
+                if not rows:
+                    # Tentar migrar se Supabase estiver vazio (uma única vez)
+                    local = _load_json()
+                    if local:
+                        save_leads(local)
+                        return load_leads()
+                    return None
+                
+                leads = []
+                for row in rows:
+                    lead = row['data']
+                    lead['closer'] = row['closer']
+                    leads.append(lead)
+                return leads
+        except: pass
+
+    # Fallback JSON
+    l = _load_json()
+    if l: l.sort(key=lambda x: int(x.get("score", 0)), reverse=True)
+    return l if l else None
+
+
+def update_closer(username: str, closer: str) -> None:
+    """Atualiza o closer de um lead via PATCH."""
+    url = _get_api_url()
+    if url:
+        try:
+            # Pegar o lead atual para manter consistência no JSON
+            resp = requests.get(f"{url}?username=eq.{username}", headers=HEADERS)
+            if resp.status_code == 200 and resp.json():
+                lead = resp.json()[0]['data']
+                lead['closer'] = closer
+                
+                # Update (PATCH)
+                requests.patch(
+                    f"{url}?username=eq.{username}",
+                    json={"closer": closer, "data": lead, "updated_at": "now()"},
+                    headers=HEADERS
+                )
+                return
+        except: pass
+
+    # Fallback JSON
+    leads = _load_json()
+    for l in leads:
+        if l.get("username") == username:
+            l["closer"] = closer
+            break
+    _save_json(leads)
+
+
+def total_leads() -> int:
+    url = _get_api_url()
+    if url:
+        try:
+            # Header para contagem rápida
+            h = {**HEADERS, "Prefer": "count=exact"}
+            resp = requests.head(url, headers=h)
+            count = resp.headers.get("Content-Range")
+            if count: return int(count.split('/')[-1])
+        except: pass
     return len(_load_json())
 
 
@@ -187,10 +159,3 @@ def _load_json() -> list[dict]:
 def _save_json(leads: list[dict]):
     with open(DB_PATH_JSON, "w", encoding="utf-8") as f:
         json.dump(leads, f, ensure_ascii=False, indent=2, default=str)
-
-# Iniciar banco no cloud automaticamente se possível
-if POSTGRES_URL:
-    try:
-        _init_db()
-    except:
-        pass
