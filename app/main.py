@@ -343,6 +343,15 @@ def render_sidebar(leads: list[dict], pagina: str):
             unsafe_allow_html=True,
         )
 
+        with st.expander("⚙️ Conectar Nuvem"):
+            s_url = st.text_input("Supabase URL", value=os.environ.get("SUPABASE_URL", ""), type="password")
+            s_key = st.text_input("Supabase Anon Key", value=os.environ.get("SUPABASE_ANON_KEY", ""), type="password")
+            if s_url and s_key:
+                os.environ["SUPABASE_URL"] = s_url
+                os.environ["SUPABASE_ANON_KEY"] = s_key
+                if st.button("🔄 Sincronizar Agora"):
+                    st.rerun()
+
 
 def _nav_btn(label: str, pagina_destino: str, ativo: bool):
     """Botão de navegação da sidebar — muda de página ao clicar."""
