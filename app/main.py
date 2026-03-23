@@ -356,15 +356,17 @@ def render_sidebar(leads: list[dict], pagina: str):
                     os.environ["SUPABASE_ANON_KEY"] = s_key
                     
                     try:
-                        # Forçar recarregamento
+                        # Forçar recarregamento para testar
                         carregados = load_leads()
                         st.session_state["leads"] = carregados or []
-                        st.success(f"Conectado com sucesso! {len(st.session_state['leads'])} leads encontrados.")
-                        st.rerun()
+                        st.success(f"✅ Conectado! {len(st.session_state['leads'])} leads na nuvem.")
+                        # Não damos rerun para a mensagem não sumir
                     except Exception as e:
-                        st.error(f"Erro ao conectar: {e}")
+                        st.error(f"❌ Erro de Conexão: {str(e)}")
+                        with st.expander("Ver detalhes do erro"):
+                            st.code(e)
                 else:
-                    st.warning("Preencha ambos os campos.")
+                    st.warning("⚠️ Preencha a URL e a Key.")
 
 
 def _nav_btn(label: str, pagina_destino: str, ativo: bool):
