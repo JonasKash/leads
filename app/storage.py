@@ -67,11 +67,28 @@ def add_leads(novos: list[dict]) -> int:
 
 
 def load_leads() -> list[dict]:
-    """Carrega todos os leads ordenados por score desc."""
+    """Carrega todos os leads ordenados por score desc. Migra crm.json se SQLite vazio."""
     c = _conn()
     rows = c.execute("SELECT data, closer FROM leads ORDER BY score DESC").fetchall()
-    c.close()
 
+    # Migrar dados do crm.json legado se o banco estiver vazio
+    if not rows:
+        json_path = DB_PATH.parent / "crm.json"
+        if json_path.exists():
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    legado = json.load(f)
+                if legado:
+                    c.close()
+                    add_leads(legado)
+                    c = _conn()
+                    rows = c.execute(
+                        "SELECT data, closer FROM leads ORDER BY score DESC"
+                    ).fetchall()
+            except Exception:
+                pass
+
+    c.close()
     leads = []
     for data_json, closer in rows:
         lead = json.loads(data_json)
