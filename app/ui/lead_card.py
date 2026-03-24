@@ -2,34 +2,7 @@
 lead_card.py — Card expandido de cada lead no dashboard.
 """
 
-import base64
-import requests
 import streamlit as st
-from functools import lru_cache
-
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://www.instagram.com/",
-    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-}
-
-
-@lru_cache(maxsize=300)
-def _avatar_data_uri(url: str) -> str:
-    """Baixa a imagem com headers de browser e retorna data URI base64."""
-    try:
-        r = requests.get(url, headers=_HEADERS, timeout=6)
-        if r.status_code == 200:
-            ct = r.headers.get("Content-Type", "image/jpeg").split(";")[0]
-            b64 = base64.b64encode(r.content).decode()
-            return f"data:{ct};base64,{b64}"
-    except Exception:
-        pass
-    return ""
 
 
 def _badge(label: str, color: str) -> str:
@@ -66,15 +39,13 @@ def render_lead_card(lead: dict, show_assign: bool = False):
                 f'font-size:28px;font-weight:700;color:#F59E0B">{initial}</div>'
             )
             if avatar_url and avatar_url.lower() not in ("nan", "none", "0", "") and avatar_url.startswith("http"):
-                data_uri = _avatar_data_uri(avatar_url)
-                if data_uri:
-                    st.markdown(
-                        f'<img src="{data_uri}" width="80" height="80" '
-                        f'style="border-radius:50%;object-fit:cover;border:2px solid #2D4A6E;display:block" />',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(fallback_html, unsafe_allow_html=True)
+                st.markdown(
+                    f'<img src="{avatar_url}" width="80" height="80" '
+                    f'style="border-radius:50%;object-fit:cover;border:2px solid #2D4A6E;display:block" '
+                    f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'" />'
+                    f'{fallback_html.replace("display:flex", "display:none")}',
+                    unsafe_allow_html=True,
+                )
             else:
                 st.markdown(fallback_html, unsafe_allow_html=True)
 
